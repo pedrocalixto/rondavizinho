@@ -1,0 +1,42 @@
+{
+  "dvr": {
+    "host": "192.168.1.100",
+    "user": "admin",
+    "senha": "SUA_SENHA_DO_DVR"
+  },
+  "canais": {
+    "1": {
+      "nome": "frente",
+      "zona": "rua",
+      "contexto": "rua residencial, carros estacionados dos dois lados sao normais",
+      "somente_pessoa": false,
+      "pes_y_min": null
+    },
+    "2": {
+      "nome": "quintal",
+      "zona": "fundos"
+    },
+    "3": {
+      "nome": "garagem",
+      "zona": "ignorar"
+    }
+  },
+  "telegram": {
+    "token": "SEU_TOKEN_DO_BOTFATHER",
+    "chat_id": "SEU_CHAT_ID"
+  },
+  "llm": {
+    "provider": "gemini",
+    "api_key": "SUA_CHAVE_DO_GOOGLE_AI_STUDIO",
+    "modelo": "gemini-2.5-flash",
+    "orcamento_dia": 500
+  },
+  "vigilia": {
+    "agenda": [
+      [
+        "22:00",
+        "06:30"
+      ]
+    ]
+  }
+}

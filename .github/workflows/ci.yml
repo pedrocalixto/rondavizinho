@@ -1,0 +1,126 @@
+# CI do RondaVizinho — qualidade + segurança a cada alteração.
+#
+# O núcleo é Python 100% stdlib (só o binário ffmpeg é externo, e o CI não
+# precisa dele: os testes são asserts puros). A "suíte de testes" do projeto são
+# os self-checks embutidos:  python -m vigia --check  /  webui/server.py --check.
+name: CI
+
+on:
+  push:
+    branches: [main]                # branch default do repo
+  pull_request:
+    branches: [main]
+
+# cancela execuções antigas do mesmo branch/PR — não gasta minutos à toa
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read                    # princípio do menor privilégio
+
+jobs:
+  # ─────────────────────────── QUALIDADE ───────────────────────────
+  # testes (asserts do projeto) + lint + compilação + parse dos front-ends
+  qualidade:
+    name: Qualidade (py ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 = alvo real (Debian bookworm/Linux); 3.12 = o que o instalador Windows usa
+        python: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python + cache de pip
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: .github/requirements-ci.txt
+
+      - name: Ferramentas de CI (ruff)
+        run: pip install -r .github/requirements-ci.txt
+
+      # ---- testes: self-checks embutidos (stdlib, sem rede/ffmpeg) ----
+      - name: Núcleo — python -m vigia --check
+        run: python -m vigia --check
+
+      - name: Painel + assistente — webui/server.py --check
+        run: python webui/server.py --check
+
+      - name: Todos os módulos Python compilam
+        run: python -m py_compile $(git ls-files '*.py')
+
+      # ---- lint: erros REAIS (pyflakes + sintaxe); estilo fica advisory ----
+      - name: Lint (ruff — erros reais)
+        run: ruff check --select E9,F .
+
+      # Advisory: o código usa alinhamento manual proposital, então NÃO adotamos
+      # um formatador estrito. O passo reporta a diferença como aviso, sem quebrar.
+      - name: Formatação (advisory)
+        run: |
+          if ! ruff format --check . >/dev/null 2>&1; then
+            echo "::warning::há diferenças de formatação (informativo — não bloqueia)"
+            ruff format --check --diff . || true
+          else
+            echo "formatação ok"
+          fi
+
+      # ---- front-end: o JS embutido dos painéis precisa ao menos parsear ----
+      - name: JS dos painéis parseia (setup.html / index.html)
+        run: |
+          node -e "
+            for (const f of ['webui/static/setup.html','webui/static/index.html']) {
+              const m = require('fs').readFileSync(f,'utf8').match(/<script>([\s\S]*)<\/script>/);
+              if (!m) throw new Error('sem <script> em ' + f);
+              new Function(m[1]);   // parseia sem executar
+            }
+            console.log('JS ok');
+          "
+
+      # ---- instalador Windows: precisa ao menos parsear como PowerShell ----
+      - name: install.ps1 parseia (PowerShell)
+        shell: pwsh
+        run: |
+          $erros = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'windows/install.ps1'), [ref]$null, [ref]$erros) | Out-Null
+          if ($erros) { $erros | ForEach-Object { Write-Error $_.Message }; exit 1 }
+          Write-Host 'install.ps1 ok'
+
+  # ─────────────────────────── SEGURANÇA ───────────────────────────
+  # SAST (bandit) + varredura de segredos (gitleaks)
+  seguranca:
+    name: Segurança
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # gitleaks precisa do histórico completo
+
+      - name: Setup Python + cache de pip
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: .github/requirements-ci.txt
+
+      - name: Ferramentas de CI (bandit)
+        run: pip install -r .github/requirements-ci.txt
+
+      # -ll = só severidade média+ (ignora ruído: asserts nos self-checks, etc.).
+      # Skips justificados (padrões intencionais e auditados deste projeto):
+      #   B104 = bind em 0.0.0.0 (painel da LAN, por design, sem auth — é doméstico)
+      #   B310 = urllib.urlopen com http (chamadas legítimas ao DVR/Telegram/IA)
+      # O resto do bandit segue ativo (eval, shell=True, senha hardcoded, etc.).
+      - name: SAST — bandit (código Python, severidade média+)
+        run: bandit -r vigia webui -ll --skip B104,B310
+
+      - name: Segredos vazados — gitleaks (árvore + histórico)
+        run: |
+          ver=8.18.4
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${ver}/gitleaks_${ver}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --no-banner --redact --exit-code 1

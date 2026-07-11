@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.bak
+*.bak.*
+
+# configuração e estado da instalação (contêm segredos do usuário)
+config.json
+estado.json
+setup.json
+.env
+/var/

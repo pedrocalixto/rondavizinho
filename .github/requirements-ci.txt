@@ -1,0 +1,4 @@
+# Ferramentas de CI (o núcleo do produto é stdlib puro — estas deps são SÓ da esteira).
+# Versões pinadas para builds reproduzíveis e cache estável.
+ruff==0.6.9
+bandit==1.7.10

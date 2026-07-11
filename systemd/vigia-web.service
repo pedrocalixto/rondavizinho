@@ -1,0 +1,15 @@
+[Unit]
+Description=RondaVizinho (painel web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 webui/server.py --porta 8080
+WorkingDirectory=/opt/vigia
+Environment=VIGIA_CONFIG=/var/lib/vigia/config.json
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

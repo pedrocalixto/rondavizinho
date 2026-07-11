@@ -1,0 +1,14 @@
+RondaVizinho
+Copyright 2026 Pedro Calixto
+
+Projeto comunitário sem fins lucrativos, licenciado sob a Apache License 2.0.
+
+Este produto funciona sobre serviços e equipamentos de terceiros com os quais
+NÃO é afiliado nem endossado:
+- DVR/câmeras que exponham "Detecção inteligente de pessoas e veículos" pelo
+  protocolo compatível Dahua (a linha Intelbras MHDX é a mais comum no Brasil,
+  mas não a única).
+- Uma IA multimodal à escolha do usuário (ex.: Google Gemini, ou qualquer
+  endpoint compatível com a API OpenAI, inclusive modelos locais).
+
+Marcas citadas pertencem aos seus respectivos donos.

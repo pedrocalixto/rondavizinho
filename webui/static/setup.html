@@ -1,0 +1,407 @@
+<!doctype html>
+<!-- Assistente de instalação (wizard F1) — fala com /api/setup/* do server.py.
+     Linguagem 100% leiga; cada passo só avança com o teste verde. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RondaVizinho — assistente de instalação</title>
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="assets/marca.css" rel="stylesheet">
+<style>
+  .passo-bola { width: 2rem; height: 2rem; border-radius: 50%; display: inline-flex;
+                align-items: center; justify-content: center; font-size: .85rem;
+                font-family: 'Michroma', sans-serif;
+                background: var(--borda); color: var(--cinza); }
+  .passo-bola.ativo { background: var(--azul-vivo); color: #fff; }
+  .passo-bola.feito { background: var(--verde); color: #fff; }
+  .thumb-cam { max-width: 100%; border-radius: calc(var(--raio) - 6px);
+               border: 1px solid var(--borda); }
+  .cursor-pointer { cursor: pointer; }
+  .card { box-shadow: var(--sombra); border: 1px solid var(--borda); }
+</style>
+</head>
+<body>
+<div class="container py-4" style="max-width: 760px">
+  <div class="text-center mb-3">
+    <h1 class="visually-hidden">RondaVizinho — assistente de instalação</h1>
+    <div class="brand justify-content-center mb-2">
+      <img src="assets/icon.svg" alt="" style="height: 46px">
+      <span class="wordmark" style="font-size: 1.4rem">Ronda<b>Vizinho</b></span>
+    </div>
+    <p class="text-muted mb-2">Assistente de instalação — siga os passos; cada um
+      testa de verdade antes de avançar. Pode fechar e voltar depois: ele retoma
+      de onde parou.</p>
+    <div id="trilha" class="d-flex justify-content-center gap-2 flex-wrap"></div>
+  </div>
+
+  <div class="card shadow-sm"><div class="card-body" id="cartao">
+    <div class="text-center text-muted py-5">Carregando…</div>
+  </div></div>
+
+  <p class="text-center text-muted small mt-3">
+    Aviso: este sistema é fornecido sem garantia e não substitui monitoramento
+    profissional. Use por sua conta e risco.
+  </p>
+</div>
+
+<script>
+"use strict";
+const PASSOS = ["Encontrar o DVR", "Entrar no DVR", "Câmeras", "Detecção",
+                "Telegram", "IA de visão", "Teste final"];
+let estado = null;          // espelho de GET /api/setup/estado
+let escolhido = "";         // ip escolhido no passo 1
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(acao, corpo) {
+  const r = await fetch("/api/setup/" + acao, corpo === undefined ? {} : {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(corpo)});
+  return r.json();
+}
+
+function trilha(atual) {
+  $("trilha").innerHTML = PASSOS.map((n, i) => {
+    const cls = i + 1 < atual ? "feito" : (i + 1 === atual ? "ativo" : "");
+    const marca = i + 1 < atual ? "✓" : (i + 1);
+    return `<span class="passo-bola ${cls}" title="${esc(n)}">${marca}</span>`;
+  }).join("");
+}
+
+function cartao(html) { $("cartao").innerHTML = html; }
+
+function erroBox(msg) {
+  return msg ? `<div class="alert alert-danger mt-3 mb-0">❌ ${esc(msg)}</div>` : "";
+}
+
+function botao(rotulo, fn, classe = "btn-primary") {
+  return `<button class="btn ${classe}" onclick="${fn}">${rotulo}</button>`;
+}
+
+// ------------------------------------------------------------ passo 1: scan
+function passo1(msg) {
+  trilha(1);
+  cartao(`
+    <h2 class="h5">Passo 1 — Encontrar o DVR na sua rede</h2>
+    <p>Vou procurar o aparelho de câmeras (DVR) na rede da sua casa.
+       Deixe o DVR ligado e no mesmo roteador.</p>
+    ${botao("Procurar o DVR", "buscaDvr()")}
+    <details class="mt-3"><summary class="text-muted cursor-pointer">Sei o endereço (avançado / acesso remoto)</summary>
+      <div class="input-group mt-2" style="max-width: 380px">
+        <input id="host-manual" class="form-control" placeholder="ex.: 192.168.1.108">
+        <button class="btn btn-outline-primary" onclick="buscaDvr($('host-manual').value)">Usar</button>
+      </div>
+    </details>
+    <div id="scan-out" class="mt-3"></div>
+    ${erroBox(msg)}`);
+}
+
+async function buscaDvr(host) {
+  $("scan-out").innerHTML = `<div class="text-muted">Procurando… (até 1 minuto)</div>`;
+  const r = await api("scan", host ? {host} : {});
+  if (!r.ok) return passo1(r.erro);
+  if (!r.candidatos.length) {
+    $("scan-out").innerHTML = erroBox("Não achei nenhum DVR. Confira se ele está " +
+      "ligado no mesmo roteador (cabo de rede) e tente de novo.");
+    return;
+  }
+  $("scan-out").innerHTML = `
+    <p class="mb-2">Encontrei ${r.candidatos.length === 1 ? "este aparelho" :
+      "estes aparelhos"} — escolha o seu DVR:</p>
+    <div class="list-group">` + r.candidatos.map((c) => `
+      <button class="list-group-item list-group-item-action"
+              onclick="escolheDvr('${esc(c.ip)}')">
+        <strong>${esc(c.ip)}</strong>
+        ${c.confirmado ? '<span class="badge bg-success ms-2">DVR confirmado</span>'
+                       : '<span class="badge bg-secondary ms-2">talvez</span>'}
+      </button>`).join("") + `</div>`;
+}
+
+function escolheDvr(ip) { escolhido = ip; passo2(); }
+
+// ----------------------------------------------------- passo 2: credenciais
+function passo2(msg) {
+  trilha(2);
+  const host = escolhido || (estado.dvr && estado.dvr.host) || "";
+  cartao(`
+    <h2 class="h5">Passo 2 — Entrar no DVR</h2>
+    <p>Use o mesmo usuário e senha do aplicativo do DVR (ou do monitor dele).</p>
+    <div class="row g-2" style="max-width: 420px">
+      <div class="col-12"><input id="c-host" class="form-control" placeholder="endereço" value="${esc(host)}"></div>
+      <div class="col-12"><input id="c-user" class="form-control" placeholder="usuário (ex.: admin)" value="${esc((estado.dvr && estado.dvr.user) || "admin")}"></div>
+      <div class="col-12"><input id="c-senha" type="password" class="form-control" placeholder="senha"></div>
+    </div>
+    <details class="mt-2"><summary class="text-muted cursor-pointer">Portas (avançado)</summary>
+      <div class="row g-2 mt-1" style="max-width: 420px">
+        <div class="col-6"><input id="c-ph" class="form-control" value="${esc((estado.dvr && estado.dvr.porta_http) || 80)}" title="porta HTTP"></div>
+        <div class="col-6"><input id="c-pr" class="form-control" value="${esc((estado.dvr && estado.dvr.porta_rtsp) || 554)}" title="porta RTSP"></div>
+      </div>
+    </details>
+    <div class="mt-3">${botao("Entrar e testar", "credenciais()")}</div>
+    <div id="c-out" class="mt-2"></div>
+    ${erroBox(msg)}`);
+}
+
+async function credenciais() {
+  $("c-out").innerHTML = `<div class="text-muted">Testando…</div>`;
+  const r = await api("credenciais", {host: $("c-host").value, user: $("c-user").value,
+    senha: $("c-senha").value, porta_http: $("c-ph") ? $("c-ph").value : 80,
+    porta_rtsp: $("c-pr") ? $("c-pr").value : 554});
+  if (!r.ok) { $("c-out").innerHTML = erroBox(r.erro); return; }
+  estado = await api("estado");
+  $("c-out").innerHTML = `<div class="alert alert-success mb-0">✅ Conectado!
+    Modelo <strong>${esc(r.modelo)}</strong>,
+    ${Object.keys(r.canais).length} câmera(s).</div>`;
+  setTimeout(passo3, 900);
+}
+
+// --------------------------------------------------------- passo 3: câmeras
+function passo3(msg) {
+  trilha(3);
+  const det = estado.canais_detectados || {};
+  const salvos = estado.canais || {};
+  const linhas = Object.keys(det).sort((a, b) => a - b).map((n) => {
+    const s = salvos[n] || {};
+    return `
+    <div class="border rounded p-2 mb-2">
+      <div class="row g-2 align-items-center">
+        <div class="col-md-4"><img class="thumb-cam" src="/api/setup/thumb?canal=${n}"
+             alt="câmera ${n}" onerror="this.outerHTML='<span class=text-muted>sem imagem</span>'"></div>
+        <div class="col-md-8">
+          <input id="cam-nome-${n}" class="form-control form-control-sm mb-1"
+                 value="${esc(s.nome || det[n] || ("câmera " + n))}">
+          <select id="cam-zona-${n}" class="form-select form-select-sm mb-1">
+            <option value="rua" ${s.zona !== "fundos" && s.zona !== "ignorar" ? "selected" : ""}>Vê a rua / frente da casa</option>
+            <option value="fundos" ${s.zona === "fundos" ? "selected" : ""}>Vê os fundos / quintal</option>
+            <option value="ignorar" ${s.zona === "ignorar" ? "selected" : ""}>Ignorar esta câmera</option>
+          </select>
+          <input id="cam-ctx-${n}" class="form-control form-control-sm"
+                 placeholder="opcional: o que essa câmera vê (ex.: portão social e garagem)"
+                 value="${esc(s.contexto || "")}">
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+  cartao(`
+    <h2 class="h5">Passo 3 — Suas câmeras</h2>
+    <p>Diga o que cada câmera enxerga. Isso ajuda o vigia a saber o que é
+       normal e o que é suspeito.</p>
+    ${linhas}
+    <div class="mt-2">${botao("Salvar câmeras", "salvaCanais()")}</div>
+    <div id="cam-out"></div>
+    ${erroBox(msg)}`);
+}
+
+async function salvaCanais() {
+  const canais = {};
+  for (const n of Object.keys(estado.canais_detectados || {})) {
+    canais[n] = {nome: $(`cam-nome-${n}`).value, zona: $(`cam-zona-${n}`).value,
+                 contexto: $(`cam-ctx-${n}`).value};
+  }
+  const r = await api("canais", {canais});
+  if (!r.ok) { $("cam-out").innerHTML = erroBox(r.erro); return; }
+  estado = await api("estado");
+  passo4();
+}
+
+// -------------------------------------------------- passo 4: detecção (SMD)
+async function passo4() {
+  trilha(4);
+  cartao(`
+    <h2 class="h5">Passo 4 — Detecção inteligente</h2>
+    <p>O vigia usa a <strong>“Detecção inteligente de pessoas e veículos”</strong>
+       do seu DVR. Vou conferir se o aparelho realmente tem esse recurso…</p>
+    <div id="ev-out" class="text-muted">Consultando o DVR…</div>`);
+  const r = await api("eventos", {});
+  if (!r.ok) {
+    $("ev-out").innerHTML = erroBox(r.erro) + (r.fatal ? "" :
+      `<div class="mt-2">${botao("Tentar de novo", "passo4()", "btn-outline-primary")}</div>`);
+    return;
+  }
+  $("ev-out").innerHTML = `
+    <div class="alert alert-success">✅ Seu DVR tem o recurso!</div>
+    <p>Quer fazer um teste ao vivo? Aperte o botão e <strong>ande na frente de
+       uma câmera</strong> — espero até 1 minuto pelo aviso do DVR.</p>
+    ${botao("Testar ao vivo (1 min)", "testeVivo()", "btn-outline-primary")}
+    ${botao("Pular teste →", "passo5()", "btn-link")}
+    <div id="vivo-out" class="mt-2"></div>`;
+}
+
+async function testeVivo() {
+  await api("eventos_escuta", {});
+  $("vivo-out").innerHTML = `<div class="text-muted">Ouvindo o DVR… ande na
+    frente de uma câmera!</div>`;
+  const fim = Date.now() + 75000;
+  const timer = setInterval(async () => {
+    const s = await api("eventos_status");
+    if (s.evento) {
+      clearInterval(timer);
+      const tipo = s.evento.code === "SmartMotionHuman" ? "pessoa" : "veículo";
+      $("vivo-out").innerHTML = `<div class="alert alert-success">✅ O DVR avisou:
+        detectou <strong>${tipo}</strong> na câmera ${s.evento.canal}. Tudo
+        funcionando!</div>` + botao("Continuar →", "passo5()");
+    } else if (!s.rodando || Date.now() > fim) {
+      clearInterval(timer);
+      $("vivo-out").innerHTML = erroBox(s.erro ||
+        "Não chegou nenhum aviso em 1 minuto. Confira no menu do DVR se a " +
+        "Detecção inteligente está ATIVADA nas câmeras.") +
+        `<div class="mt-2">${botao("Tentar de novo", "testeVivo()", "btn-outline-primary")}
+         ${botao("Continuar assim mesmo →", "passo5()", "btn-link")}</div>`;
+    }
+  }, 3000);
+}
+
+// -------------------------------------------------------- passo 5: telegram
+let tgTimer = null;         // poll do chat: cancelar ao trocar de token/tela
+function passo5(msg) {
+  clearInterval(tgTimer);
+  trilha(5);
+  cartao(`
+    <h2 class="h5">Passo 5 — Avisos no Telegram</h2>
+    <ol>
+      <li>Abra o Telegram e procure por <strong>@BotFather</strong>.</li>
+      <li>Mande <code>/newbot</code> e siga as instruções (dê um nome tipo
+          <em>Vigia da Casa</em>).</li>
+      <li>No final ele te dá um <strong>token</strong> (uma linha comprida com
+          números e letras). Copie e cole aqui:</li>
+    </ol>
+    <div class="input-group" style="max-width: 480px">
+      <input id="tg-token" class="form-control" placeholder="cole o token aqui">
+      <button class="btn btn-primary" onclick="validaToken()">Validar</button>
+    </div>
+    <div id="tg-out" class="mt-3"></div>
+    ${erroBox(msg)}`);
+}
+
+async function validaToken() {
+  $("tg-out").innerHTML = `<div class="text-muted">Validando…</div>`;
+  const r = await api("telegram", {token: $("tg-token").value});
+  if (!r.ok) { $("tg-out").innerHTML = erroBox(r.erro); return; }
+  $("tg-out").innerHTML = `
+    <div class="alert alert-success">✅ Bot <strong>@${esc(r.bot)}</strong> conectado!</div>
+    <p>Agora abra <a href="https://t.me/${esc(r.bot)}" target="_blank">
+       <strong>t.me/${esc(r.bot)}</strong></a> no seu celular e aperte
+       <strong>INICIAR</strong> (qualquer mensagem serve).<br>
+       ⚠️ Atenção: a mensagem vai no chat do <strong>@${esc(r.bot)}</strong> —
+       não no chat do BotFather!</p>
+    <div id="tg-chat" class="text-muted">Aguardando sua mensagem chegar ao
+      <strong>@${esc(r.bot)}</strong>…</div>
+    <div class="mt-2">${botao("Colar outro token", "passo5()", "btn-link")}</div>`;
+  const timer = tgTimer = setInterval(async () => {
+    const c = await api("telegram_chat");
+    if (!c.ok) return;
+    clearInterval(timer);
+    $("tg-chat").innerHTML = `<div class="alert alert-success">Te achei,
+      <strong>${esc(c.nome || "morador")}</strong>!</div>` +
+      botao("Receber mensagem de boas-vindas →", `confirmaChat('${esc(c.chat_id)}')`);
+  }, 3000);
+}
+
+async function confirmaChat(chatId) {
+  const r = await api("telegram_confirma", {chat_id: chatId});
+  if (!r.ok) { $("tg-chat").innerHTML = erroBox(r.erro); return; }
+  estado = await api("estado");
+  passo6();
+}
+
+// ------------------------------------------------------------- passo 6: IA
+function passo6(msg) {
+  trilha(6);
+  cartao(`
+    <h2 class="h5">Passo 6 — IA de visão <span class="badge bg-secondary">pode pular</span></h2>
+    <p>Com uma IA de visão, o vigia <strong>descreve</strong> quem apareceu
+       (roupas, veículo, placa se legível). Qualquer IA multimodal serve; o
+       Gemini do Google tem plano gratuito e é o caminho mais fácil:</p>
+    <ol>
+      <li>Entre em <a href="https://aistudio.google.com/api-keys" target="_blank">aistudio.google.com/api-keys</a> com sua conta Google.</li>
+      <li>Clique em <em>Create API key</em> e copie a chave.</li>
+    </ol>
+    <div class="row g-2" style="max-width: 480px">
+      <div class="col-12">
+        <select id="llm-prov" class="form-select" onchange="$('llm-avancado').style.display = this.value === 'openai' ? '' : 'none'">
+          <option value="gemini" selected>Google Gemini (grátis, recomendado)</option>
+          <option value="openai">Outro serviço compatível com OpenAI (avançado)</option>
+        </select>
+      </div>
+      <div class="col-12"><input id="llm-key" class="form-control" placeholder="cole a chave aqui"></div>
+      <div id="llm-avancado" style="display:none" class="col-12">
+        <input id="llm-url" class="form-control mb-1" placeholder="endereço do serviço (base_url)">
+        <input id="llm-modelo" class="form-control" placeholder="modelo (ex.: gpt-4o-mini)">
+      </div>
+    </div>
+    <div class="mt-3">
+      ${botao("Testar com a minha câmera", "testaLlm()")}
+      ${botao("Pular (sem descrições) →", "pulaLlm()", "btn-link")}
+    </div>
+    <div id="llm-out" class="mt-2"></div>
+    ${erroBox(msg)}`);
+}
+
+async function testaLlm() {
+  $("llm-out").innerHTML = `<div class="text-muted">Pegando um quadro da sua
+    câmera e mostrando para a IA… (até 1 min)</div>`;
+  const prov = $("llm-prov").value;
+  const r = await api("llm", {provider: prov, api_key: $("llm-key").value,
+    base_url: prov === "openai" ? $("llm-url").value : "",
+    modelo: prov === "openai" ? ($("llm-modelo").value || "gpt-4o-mini") : "gemini-2.5-flash"});
+  if (!r.ok) { $("llm-out").innerHTML = erroBox(r.erro); return; }
+  $("llm-out").innerHTML = `<div class="alert alert-success">A IA olhou sua
+    câmera e viu: <em>${esc(r.descricao)}</em></div>` + botao("Continuar →", "passo7()");
+}
+
+async function pulaLlm() {
+  const r = await api("llm", {pular: true});
+  $("llm-out").innerHTML = `<div class="alert alert-warning">${esc(r.aviso)}</div>` +
+    botao("Continuar →", "passo7()");
+}
+
+// ----------------------------------------------------- passo 7: teste final
+function passo7(msg) {
+  trilha(7);
+  cartao(`
+    <h2 class="h5">Passo 7 — Teste final</h2>
+    <p>Vou testar o caminho inteiro: câmera → detecção → IA → foto no seu
+       Telegram → armazenamento. Se tudo ficar verde, o vigia entra em serviço.</p>
+    ${botao("Testar tudo e ligar o vigia", "finalizar()")}
+    <div id="fim-out" class="mt-3"></div>`);
+}
+
+async function finalizar() {
+  $("fim-out").innerHTML = `<div class="text-muted">Testando tudo… (até 2 min)</div>`;
+  const r = await api("finalizar", {});
+  const linhas = (r.itens || []).map((i) => `
+    <li class="list-group-item d-flex justify-content-between">
+      <span>${i.ok ? "✅" : "❌"} ${esc(i.nome)}</span>
+      <span class="text-muted small">${esc(i.detalhe)}</span></li>`).join("");
+  $("fim-out").innerHTML = `<ul class="list-group mb-3">${linhas}</ul>` + (r.ok
+    ? `<div class="alert alert-success"><strong>Pronto!</strong> A configuração
+         foi salva. Reinicie o serviço do RondaVizinho (ou o computador) e ele
+         começa a trabalhar. Confira a foto de boas-vindas no seu Telegram!</div>
+       <a class="btn btn-success" href="/">Abrir o painel</a>`
+    : erroBox("Algum item falhou — corrija e teste de novo. Nada foi salvo ainda.") +
+      `<div class="mt-2">${botao("Testar de novo", "finalizar()", "btn-outline-primary")}</div>`);
+}
+
+// ------------------------------------------------------------------ arranque
+const IR = [null, passo1, passo2, passo3, passo4, passo5, passo6, passo7];
+(async () => {
+  estado = await api("estado");
+  if (estado.concluido) {
+    trilha(8);
+    cartao(`<div class="alert alert-success mb-2">✅ A instalação já foi concluída.</div>
+      <a class="btn btn-primary" href="/">Abrir o painel</a>
+      ${botao("Refazer instalação", "passo1()", "btn-link")}`);
+    return;
+  }
+  (IR[Math.min(estado.passo || 1, 7)] || passo1)();
+})();
+</script>
+</body>
+</html>
